@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as faceapi from "face-api.js";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,7 +43,8 @@ interface PopupState {
 }
 
 const registeredImages = [
-  { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo.jpg" },
+  { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo1.jpg" },
+  { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo.png" },
 ];
 
 const FaceRecognition = () => {
@@ -57,20 +58,17 @@ const FaceRecognition = () => {
     msg: "",
     type: "warning",
   });
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [lastDetectionTime, setLastDetectionTime] = useState(0);
-  const [detectionInterval, setDetectionInterval] =
-    useState<NodeJS.Timeout | null>(null);
-  const [cameraError, setCameraError] = useState<string>("");
-  const [personDetected, setPersonDetected] = useState(false);
-  const [cameraInitialized, setCameraInitialized] = useState(false);
-  const [popupCountdown, setPopupCountdown] = useState(3);
+  const [recognitionThreshold, setRecognitionThreshold] = useState(0.6); // Reduzido de 0.7 para 0.6
 
   // Monitora mudanças no popup para debug
   useEffect(() => {
     console.log("Estado do popup mudou:", popup);
   }, [popup]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string>("");
+  const [personDetected, setPersonDetected] = useState(false);
+  const detectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Carrega os modelos do face-api.js
   useEffect(() => {
@@ -96,11 +94,17 @@ const FaceRecognition = () => {
     loadModels();
   }, []);
 
-  // Ativa a webcam com requestAnimationFrame
-  const startCamera = useCallback(async () => {
+  // Função para iniciar a câmera
+  const startCamera = async () => {
     try {
       console.log("Solicitando acesso à câmera...");
       setCameraError("");
+
+      // Para qualquer stream existente
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
 
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -120,118 +124,53 @@ const FaceRecognition = () => {
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
         streamRef.current = mediaStream;
-
-        // Configura event listeners para detectar quando o vídeo para
-        videoRef.current.onpause = () => {
-          console.log("Vídeo pausado, retomando...");
-          videoRef.current?.play();
-        };
-
-        videoRef.current.onended = () => {
-          console.log("Vídeo terminou, reiniciando câmera...");
-          setCameraActive(false);
-          setCameraInitialized(false);
-          startCamera();
-        };
-
         setCameraActive(true);
-        setCameraInitialized(true);
         console.log("Câmera ativada com sucesso!");
 
-        // Sistema de keep alive usando requestAnimationFrame
-        let animationId: number;
+        // Aguarda o vídeo estar pronto
+        videoRef.current.onloadedmetadata = () => {
+          console.log("Vídeo carregado e pronto");
+          videoRef.current?.play().catch(console.error);
 
-        const keepAlive = () => {
-          if (videoRef.current && streamRef.current) {
-            // Força o vídeo a continuar reproduzindo
-            if (videoRef.current.paused) {
-              console.log("Vídeo pausado, forçando retomada...");
-              videoRef.current.play();
-            }
-
-            // Verifica se as tracks ainda estão ativas
-            const tracks = streamRef.current.getVideoTracks();
-            const activeTracks = tracks.filter(
-              (track) => track.readyState === "live"
-            );
-
-            if (activeTracks.length === 0) {
-              console.log("Câmera parou, reiniciando imediatamente...");
-              if (animationId) {
-                cancelAnimationFrame(animationId);
-              }
-              setCameraActive(false);
-              setCameraInitialized(false);
-              startCamera();
-              return;
-            }
-
-            // Força a reprodução
-            videoRef.current.play().catch(() => {
-              console.log("Erro ao reproduzir, reiniciando câmera...");
-              if (animationId) {
-                cancelAnimationFrame(animationId);
-              }
-              setCameraActive(false);
-              setCameraInitialized(false);
-              startCamera();
-              return;
-            });
-
-            // Continua o loop
-            animationId = requestAnimationFrame(keepAlive);
-          }
+          // Inicia o reconhecimento facial após o vídeo estar pronto
+          console.log("Iniciando reconhecimento facial após vídeo pronto...");
+          startFaceRecognition();
         };
-
-        // Inicia o loop de keep alive
-        animationId = requestAnimationFrame(keepAlive);
-
-        // Armazena o animationId para limpeza
-        if ((window as any).cameraAnimationId) {
-          cancelAnimationFrame((window as any).cameraAnimationId);
-        }
-        (window as any).cameraAnimationId = animationId;
       }
     } catch (error) {
       console.error("Erro ao acessar webcam:", error);
       setCameraError(
         error instanceof Error ? error.message : "Erro desconhecido"
       );
+      setCameraActive(false);
     }
-  }, []);
+  };
 
   // Inicia a câmera quando os modelos estiverem carregados
   useEffect(() => {
-    if (modelsLoaded && !cameraActive && !cameraInitialized) {
+    if (modelsLoaded && !cameraActive) {
       console.log("Modelos carregados, iniciando câmera...");
       startCamera();
     }
-  }, [modelsLoaded, startCamera]);
+  }, [modelsLoaded, cameraActive]);
 
-  // Cleanup function melhorada
+  // Cleanup function
   useEffect(() => {
     return () => {
       console.log("Cleanup: parando stream e intervalos");
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track: MediaStreamTrack) => {
+        streamRef.current.getTracks().forEach((track) => {
           console.log("Parando track:", track.kind);
           track.stop();
         });
         streamRef.current = null;
       }
-      if (detectionInterval) {
-        clearInterval(detectionInterval);
-      }
-      if ((window as any).cameraKeepAliveInterval) {
-        clearInterval((window as any).cameraKeepAliveInterval);
-        (window as any).cameraKeepAliveInterval = null;
-      }
-      if ((window as any).cameraAnimationId) {
-        cancelAnimationFrame((window as any).cameraAnimationId);
-        (window as any).cameraAnimationId = null;
+      if (detectionIntervalRef.current) {
+        clearInterval(detectionIntervalRef.current);
+        detectionIntervalRef.current = null;
       }
     };
-  }, [detectionInterval]);
+  }, []);
 
   // Carrega descritores das imagens registradas
   useEffect(() => {
@@ -240,290 +179,384 @@ const FaceRecognition = () => {
     const loadImages = async () => {
       try {
         const descs: Descriptors[] = [];
-        console.log("Carregando imagens registradas...");
+        console.log("🔄 Carregando imagens registradas...");
+        console.log("📋 Imagens configuradas:", registeredImages);
 
-        for (const reg of registeredImages) {
+        for (let i = 0; i < registeredImages.length; i++) {
+          const reg = registeredImages[i];
           try {
+            console.log(
+              `\n🖼️ [${i + 1}/${registeredImages.length}] Tentando carregar: ${
+                reg.src
+              }`
+            );
+
+            // Testa se a imagem existe primeiro
+            const response = await fetch(reg.src);
+            if (!response.ok) {
+              throw new Error(
+                `HTTP ${response.status}: ${response.statusText}`
+              );
+            }
+            console.log(
+              `✅ [${i + 1}/${
+                registeredImages.length
+              }] Imagem existe no servidor: ${reg.src}`
+            );
+
             const img = await faceapi.fetchImage(reg.src);
-            const detection = await faceapi
-              .detectSingleFace(
-                img,
-                new faceapi.TinyFaceDetectorOptions({
-                  inputSize: 416,
-                  scoreThreshold: 0.3,
-                })
-              )
-              .withFaceLandmarks()
-              .withFaceDescriptor();
+            console.log(
+              `✅ [${i + 1}/${
+                registeredImages.length
+              }] Imagem carregada do servidor: ${reg.src}`
+            );
+            console.log(
+              `📐 [${i + 1}/${registeredImages.length}] Dimensões da imagem: ${
+                img.width
+              }x${img.height}`
+            );
+
+            // Tenta detectar face com diferentes configurações
+            let detection = null;
+
+            // Primeira tentativa: configuração padrão
+            try {
+              detection = await faceapi
+                .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                .withFaceLandmarks()
+                .withFaceDescriptor();
+              console.log(
+                `✅ [${i + 1}/${
+                  registeredImages.length
+                }] Detecção bem-sucedida com configuração padrão`
+              );
+            } catch {
+              console.warn(
+                `⚠️ [${i + 1}/${
+                  registeredImages.length
+                }] Falha na detecção padrão, tentando configuração alternativa...`
+              );
+
+              // Segunda tentativa: configuração mais permissiva
+              try {
+                detection = await faceapi
+                  .detectSingleFace(
+                    img,
+                    new faceapi.TinyFaceDetectorOptions({
+                      inputSize: 512,
+                      scoreThreshold: 0.3,
+                    })
+                  )
+                  .withFaceLandmarks()
+                  .withFaceDescriptor();
+                console.log(
+                  `✅ [${i + 1}/${
+                    registeredImages.length
+                  }] Detecção bem-sucedida com configuração alternativa`
+                );
+              } catch (altError) {
+                console.error(
+                  `❌ [${i + 1}/${
+                    registeredImages.length
+                  }] Falha em ambas as tentativas de detecção`
+                );
+                throw altError;
+              }
+            }
 
             if (detection) {
-              descs.push({ name: reg.name, descriptor: detection.descriptor });
-              console.log(`Imagem carregada: ${reg.name}`);
+              descs.push({
+                name: reg.name,
+                descriptor: detection.descriptor,
+              });
+              console.log(
+                `✅ [${i + 1}/${
+                  registeredImages.length
+                }] Imagem carregada com sucesso: ${reg.name} (${reg.src})`
+              );
+              console.log(
+                `   📊 Descritor criado com ${detection.descriptor.length} valores`
+              );
+              console.log(
+                `   🎯 Confiança da detecção: ${detection.detection.score.toFixed(
+                  4
+                )}`
+              );
             } else {
-              console.warn(`Nenhum rosto detectado em: ${reg.src}`);
+              console.warn(
+                `❌ [${i + 1}/${
+                  registeredImages.length
+                }] Nenhum rosto detectado em: ${reg.name} (${reg.src})`
+              );
+              console.warn(
+                `   💡 Verifique se a imagem ${reg.src} contém um rosto claro e bem iluminado`
+              );
             }
           } catch (error) {
-            console.error(`Erro ao carregar imagem ${reg.src}:`, error);
+            console.error(
+              `❌ [${i + 1}/${
+                registeredImages.length
+              }] Erro ao carregar imagem ${reg.name} (${reg.src}):`,
+              error
+            );
+            console.error(
+              `   🔍 Verifique se o arquivo ${reg.src} existe na pasta /public/registered/`
+            );
           }
         }
 
         setDescriptors(descs);
-        console.log(`Total de descritores carregados: ${descs.length}`);
+        console.log(`\n📊 Total de descritores carregados: ${descs.length}`);
 
         if (descs.length === 0) {
+          console.error(
+            "⚠️ NENHUM DESCRITOR CARREGADO! O reconhecimento não funcionará."
+          );
           setPopup({
             open: true,
-            msg: "Nenhuma imagem registrada foi carregada. Verifique se as fotos estão na pasta /public/registered",
-            type: "warning",
+            msg: "ERRO: Nenhuma imagem registrada foi carregada. Verifique se as imagens estão na pasta /public/registered/ e contêm rostos claros.",
+            type: "error",
+          });
+        } else {
+          console.log("✅ Descritores carregados com sucesso!");
+          console.log("📋 Descritores disponíveis:");
+          descs.forEach((desc, index) => {
+            console.log(
+              `   ${index + 1}. ${desc.name} - ${
+                desc.descriptor.length
+              } valores`
+            );
           });
         }
       } catch (error) {
         console.error("Erro ao carregar imagens:", error);
-        setPopup({
-          open: true,
-          msg: "Erro ao carregar imagens registradas.",
-          type: "error",
-        });
       }
     };
 
     loadImages();
   }, [modelsLoaded]);
 
-  // Inicia o reconhecimento em tempo real quando tudo estiver carregado
-  useEffect(() => {
-    if (!modelsLoaded || descriptors.length === 0 || !cameraActive) return;
+  // Função para iniciar o reconhecimento facial
+  const startFaceRecognition = () => {
+    console.log("Iniciando sistema de reconhecimento facial...");
 
-    console.log("Iniciando reconhecimento em tempo real...");
-
-    // Limpa intervalo anterior se existir
-    if (detectionInterval) {
-      clearInterval(detectionInterval);
+    if (detectionIntervalRef.current) {
+      console.log("Limpando intervalo anterior...");
+      clearInterval(detectionIntervalRef.current);
     }
 
-    // Pequeno delay para garantir que a câmera esteja totalmente pronta
-    const startDelay = setTimeout(() => {
-      // Inicia verificação a cada 1 segundo (mais rápido para fluxo intenso)
-      const interval = setInterval(() => {
-        performFaceRecognition();
-      }, 1000);
+    console.log("Criando novo intervalo de detecção...");
+    detectionIntervalRef.current = setInterval(async () => {
+      console.log("Intervalo executando...");
+      console.log("Video ref:", !!videoRef.current);
+      console.log("Canvas ref:", !!canvasRef.current);
+      console.log("Is processing:", isProcessing);
 
-      setDetectionInterval(interval);
-    }, 2000); // 2 segundos de delay inicial
-
-    // Cleanup
-    return () => {
-      clearTimeout(startDelay);
-      if (detectionInterval) {
-        clearInterval(detectionInterval);
-      }
-    };
-  }, [modelsLoaded, descriptors.length, cameraActive]);
-
-  // Função para verificar acesso em tempo real
-  const performFaceRecognition = async () => {
-    if (!videoRef.current || descriptors.length === 0 || isProcessing) {
-      return;
-    }
-
-    // Evita verificações muito frequentes (mínimo 1 segundo entre verificações)
-    const now = Date.now();
-    if (now - lastDetectionTime < 1000) {
-      return;
-    }
-
-    setIsProcessing(true);
-
-    try {
-      // Verifica se o vídeo está pronto antes de analisar
-      if (
-        videoRef.current.videoWidth === 0 ||
-        videoRef.current.videoHeight === 0
-      ) {
-        console.log("Vídeo ainda não está pronto");
+      if (!videoRef.current || !canvasRef.current || isProcessing) {
+        console.log("Condições não atendidas para execução do intervalo");
         return;
       }
-
-      // Verifica se a câmera está tampada ou com imagem muito escura
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
 
       try {
-        ctx.drawImage(videoRef.current, 0, 0);
+        console.log("Iniciando processamento...");
+        setIsProcessing(true);
+        await performFaceRecognition();
       } catch (error) {
-        console.log("Erro ao desenhar imagem no canvas:", error);
-        return;
+        console.error("Erro no reconhecimento:", error);
+      } finally {
+        console.log("Finalizando processamento...");
+        setIsProcessing(false);
       }
+    }, 1000); // Verifica a cada segundo
 
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
+    console.log("Intervalo de detecção criado com sucesso");
+  };
 
-      // Calcula o brilho médio da imagem
-      let totalBrightness = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        totalBrightness += (r + g + b) / 3;
-      }
-      const averageBrightness = totalBrightness / (data.length / 4);
+  // Função principal de reconhecimento facial
+  const performFaceRecognition = async () => {
+    console.log("🔍 Iniciando reconhecimento facial...");
+    console.log("📹 Video ref:", !!videoRef.current);
+    console.log("🎨 Canvas ref:", !!canvasRef.current);
+    console.log("🤖 Models loaded:", modelsLoaded);
+    console.log("👥 Descriptors count:", descriptors.length);
+    console.log("🎯 Threshold atual:", recognitionThreshold);
 
-      // Se a imagem está muito escura (câmera tampada), não processa
-      if (averageBrightness < 30) {
-        console.log(
-          `Câmera tampada ou muito escura - brilho: ${averageBrightness.toFixed(
-            1
-          )}`
-        );
-        setPersonDetected(false);
-        return;
-      }
+    if (!videoRef.current || !canvasRef.current || !modelsLoaded) {
+      console.log("❌ Condições não atendidas para reconhecimento");
+      return;
+    }
 
-      // Verifica se há variação suficiente na imagem (evita imagens estáticas)
-      let variance = 0;
-      const mean = averageBrightness;
-      for (let i = 0; i < data.length; i += 4) {
-        const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
-        variance += Math.pow(brightness - mean, 2);
-      }
-      variance = variance / (data.length / 4);
+    if (descriptors.length === 0) {
+      console.log("❌ Nenhum descritor carregado - reconhecimento impossível");
+      setPopup({
+        open: true,
+        msg: "ERRO: Nenhuma pessoa registrada. Adicione imagens na pasta /public/registered/",
+        type: "error",
+      });
+      return;
+    }
 
-      // Se a variação é muito baixa (imagem muito uniforme), pode estar tampada
-      if (variance < 100) {
-        console.log(`Imagem muito uniforme - variação: ${variance.toFixed(1)}`);
-        setPersonDetected(false);
-        return;
-      }
+    // Fecha popup anterior antes de fazer nova verificação
+    if (popup.open) {
+      console.log("🔄 Fechando popup anterior para nova verificação...");
+      closePopup();
+    }
 
-      // Detecta rosto na webcam com parâmetros otimizados para velocidade
-      const detection = await faceapi
-        .detectSingleFace(
-          videoRef.current,
-          new faceapi.TinyFaceDetectorOptions({
-            inputSize: 416, // Aumentado para melhor precisão
-            scoreThreshold: 0.3, // Threshold mais baixo para detectar mais rostos
-          })
-        )
+    try {
+      // Detecta faces no vídeo
+      console.log("🔍 Detectando faces no vídeo...");
+      const detections = await faceapi
+        .detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
-        .withFaceDescriptor();
+        .withFaceDescriptors();
 
-      if (!detection) {
-        console.log("Nenhum rosto detectado");
+      console.log(`👤 Faces detectadas: ${detections.length}`);
+
+      if (detections.length === 0) {
+        console.log("❌ Nenhuma face detectada na webcam");
         setPersonDetected(false);
         return;
       }
 
-      // Verifica se o rosto detectado tem qualidade mínima (menos restritivo)
-      if (detection.detection.score < 0.3) {
-        console.log(
-          `Rosto detectado com baixa confiança: ${detection.detection.score.toFixed(
-            3
-          )}`
-        );
-        setPersonDetected(false);
-        return;
-      }
-
-      console.log(
-        `Rosto detectado com confiança: ${detection.detection.score.toFixed(3)}`
-      );
       setPersonDetected(true);
-      console.log("Iniciando comparação com descritores registrados...");
+      console.log("✅ Pessoa detectada, comparando com descritores...");
+
+      // Desenha os retângulos de detecção
+      const canvas = canvasRef.current;
+      const displaySize = {
+        width: videoRef.current!.videoWidth,
+        height: videoRef.current!.videoHeight,
+      };
+      faceapi.matchDimensions(canvas, displaySize);
+
+      const resizedDetections = faceapi.resizeResults(detections, displaySize);
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        faceapi.draw.drawDetections(canvas, resizedDetections);
+      }
 
       // Compara com os descritores registrados
-      let minDist = 1;
-      let foundName = "";
+      let foundMatch = false;
+      let bestMatch = { name: "", distance: Infinity, similarity: 0 };
 
-      for (const desc of descriptors) {
-        const dist = faceapi.euclideanDistance(
-          detection.descriptor,
-          desc.descriptor
+      console.log(
+        `🔍 Comparando ${detections.length} face(s) com ${descriptors.length} descritor(es)...`
+      );
+
+      for (const detection of detections) {
+        console.log(
+          `📊 Processando face detectada (confiança: ${detection.detection.score.toFixed(
+            3
+          )})`
         );
-        if (dist < minDist) {
-          minDist = dist;
-          foundName = desc.name;
+
+        console.log(
+          `🔍 Testando contra ${descriptors.length} descritor(es) registrado(s)...`
+        );
+
+        for (let i = 0; i < descriptors.length; i++) {
+          const descriptor = descriptors[i];
+          const distance = faceapi.euclideanDistance(
+            detection.descriptor,
+            descriptor.descriptor
+          );
+
+          // Calcula similaridade (0-1, onde 1 é idêntico)
+          const similarity = 1 - Math.min(distance, 1);
+
+          console.log(
+            `📏 [${i + 1}/${descriptors.length}] ${
+              descriptor.name
+            }: distância=${distance.toFixed(
+              4
+            )}, similaridade=${similarity.toFixed(
+              4
+            )}, threshold=${recognitionThreshold}`
+          );
+
+          // Atualiza melhor match para debug
+          if (distance < bestMatch.distance) {
+            bestMatch = {
+              name: descriptor.name,
+              distance: distance,
+              similarity: similarity,
+            };
+          }
+
+          // Lógica corrigida: distância menor = mais similar
+          if (distance < recognitionThreshold) {
+            console.log(
+              `✅ PESSOA RECONHECIDA: ${
+                descriptor.name
+              } (distância: ${distance.toFixed(
+                4
+              )}, similaridade: ${similarity.toFixed(4)})`
+            );
+            foundMatch = true;
+            setPopup({
+              open: true,
+              msg: `Acesso LIBERADO! Bem-vindo, ${
+                descriptor.name
+              }! Você possui ingresso válido. (Similaridade: ${(
+                similarity * 100
+              ).toFixed(1)}%)`,
+              type: "success",
+            });
+            return;
+          } else {
+            console.log(
+              `❌ [${i + 1}/${descriptors.length}] Distância muito alta para ${
+                descriptor.name
+              }: ${distance.toFixed(4)} >= ${recognitionThreshold}`
+            );
+          }
         }
       }
 
-      console.log(`Distância mínima: ${minDist.toFixed(4)}`);
+      // Se chegou aqui, não reconheceu ninguém
+      if (!foundMatch) {
+        console.log("❌ PESSOA NÃO RECONHECIDA");
+        console.log("📊 Melhor match encontrado:");
+        console.log(`   - Nome: ${bestMatch.name}`);
+        console.log(`   - Distância: ${bestMatch.distance.toFixed(4)}`);
+        console.log(
+          `   - Similaridade: ${(bestMatch.similarity * 100).toFixed(1)}%`
+        );
+        console.log(`   - Threshold: ${recognitionThreshold}`);
 
-      // Threshold otimizado para alta precisão e velocidade
-      if (minDist < 0.5) {
-        setLastDetectionTime(now);
-        console.log(
-          `ACESSO LIBERADO - Definindo popup de sucesso para: ${foundName}`
-        );
+        // Mostra todas as distâncias para debug
+        console.log("📊 Todas as distâncias:");
+        for (const descriptor of descriptors) {
+          const distance = faceapi.euclideanDistance(
+            detections[0].descriptor,
+            descriptor.descriptor
+          );
+          const similarity = 1 - Math.min(distance, 1);
+          console.log(
+            `   - ${descriptor.name}: ${distance.toFixed(4)} (${(
+              similarity * 100
+            ).toFixed(1)}%)`
+          );
+        }
+
         setPopup({
           open: true,
-          msg: `Bem-vindo(a), ${foundName}!`,
-          type: "success",
-        });
-        autoClosePopup(); // Fecha automaticamente após 3 segundos
-        console.log(
-          `Acesso liberado para: ${foundName} (distância: ${minDist.toFixed(
-            4
-          )})`
-        );
-      } else if (minDist < 0.7) {
-        // Só mostra popup de negação se a pessoa estiver relativamente próxima
-        setLastDetectionTime(now);
-        console.log(`ACESSO NEGADO - Definindo popup de erro`);
-        setPopup({
-          open: true,
-          msg: "Você não possui ingresso válido para este jogo.",
+          msg: `Acesso NEGADO! Pessoa não reconhecida. Melhor match: ${
+            bestMatch.name
+          } (${(bestMatch.similarity * 100).toFixed(1)}% similaridade)`,
           type: "error",
         });
-        autoClosePopup(); // Fecha automaticamente após 3 segundos
-        console.log(
-          `Acesso negado - pessoa não reconhecida (melhor distância: ${minDist.toFixed(
-            4
-          )})`
-        );
-      } else {
-        // Se a distância for muito alta, não mostra popup (pessoa não registrada)
-        setLastDetectionTime(now);
-        console.log(
-          `Pessoa não registrada - sem popup (distância: ${minDist.toFixed(4)})`
-        );
       }
     } catch (error) {
-      console.error("Erro durante verificação:", error);
-      setPersonDetected(false);
-    } finally {
-      setIsProcessing(false);
+      console.error("❌ Erro no reconhecimento facial:", error);
     }
-  };
-
-  // Função para verificar acesso (mantida para compatibilidade)
-  const handleCheckAccess = async () => {
-    await performFaceRecognition();
   };
 
   // Função para fechar popup
   const closePopup = () => {
     console.log("Fechando popup");
     setPopup({ open: false, msg: "", type: "warning" });
-    setPopupCountdown(3); // Reseta a contagem
-  };
-
-  // Função para fechar popup automaticamente
-  const autoClosePopup = () => {
-    setPopupCountdown(3);
-
-    const countdownInterval = setInterval(() => {
-      setPopupCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(countdownInterval);
-          closePopup();
-          return 3;
-        }
-        return prev - 1;
-      });
-    }, 1000);
   };
 
   // Função para reiniciar a câmera
@@ -532,7 +565,7 @@ const FaceRecognition = () => {
 
     // Para o stream atual
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track: MediaStreamTrack) => {
+      streamRef.current.getTracks().forEach((track) => {
         track.stop();
       });
       streamRef.current = null;
@@ -543,11 +576,16 @@ const FaceRecognition = () => {
       videoRef.current.srcObject = null;
     }
 
+    // Para o intervalo de detecção
+    if (detectionIntervalRef.current) {
+      clearInterval(detectionIntervalRef.current);
+      detectionIntervalRef.current = null;
+    }
+
     // Reseta estados
     setCameraActive(false);
     setCameraError("");
     setPersonDetected(false);
-    setCameraInitialized(false);
 
     // Reinicia
     await startCamera();
@@ -680,6 +718,214 @@ const FaceRecognition = () => {
                     <Camera className="h-4 w-4" />
                     Reiniciar Câmera
                   </Button>
+
+                  <Button
+                    onClick={() => {
+                      console.log("Testando popup...");
+                      setPopup({
+                        open: true,
+                        msg: "Teste de popup - Se você vê esta mensagem, o popup está funcionando!",
+                        type: "warning",
+                      });
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Eye className="h-4 w-4" />
+                    Testar Popup
+                  </Button>
+
+                  <Button
+                    onClick={() => {
+                      console.log("Forçando reconhecimento...");
+                      performFaceRecognition();
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Zap className="h-4 w-4" />
+                    Forçar Reconhecimento
+                  </Button>
+
+                  <Button
+                    onClick={() => {
+                      const newThreshold = recognitionThreshold + 0.05;
+                      setRecognitionThreshold(newThreshold);
+                      console.log(`Threshold aumentado para: ${newThreshold}`);
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Settings className="h-4 w-4" />
+                    Aumentar Threshold ({recognitionThreshold.toFixed(2)})
+                  </Button>
+
+                  <Button
+                    onClick={() => {
+                      const newThreshold = Math.max(
+                        0.1,
+                        recognitionThreshold - 0.05
+                      );
+                      setRecognitionThreshold(newThreshold);
+                      console.log(`Threshold diminuído para: ${newThreshold}`);
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Settings className="h-4 w-4" />
+                    Diminuir Threshold ({recognitionThreshold.toFixed(2)})
+                  </Button>
+
+                  <Button
+                    onClick={() => {
+                      console.log("🔍 Verificando descritores carregados...");
+                      console.log(
+                        "📊 Total de descritores:",
+                        descriptors.length
+                      );
+                      console.log("📋 Imagens configuradas:");
+                      registeredImages.forEach((img, index) => {
+                        console.log(
+                          `   ${index + 1}. ${img.name} - ${img.src}`
+                        );
+                      });
+                      console.log("📋 Descritores carregados:");
+                      descriptors.forEach((desc, index) => {
+                        console.log(
+                          `   ${index + 1}. ${desc.name} - ${
+                            desc.descriptor.length
+                          } valores`
+                        );
+                      });
+                      if (descriptors.length === 0) {
+                        console.log("⚠️ NENHUM DESCRITOR CARREGADO!");
+                        console.log(
+                          "   Verifique se as imagens existem e contêm rostos"
+                        );
+                      }
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Users className="h-4 w-4" />
+                    Verificar Descritores
+                  </Button>
+
+                  <Button
+                    onClick={async () => {
+                      console.log(
+                        "🧪 Testando reconhecimento com diferentes thresholds..."
+                      );
+                      const thresholds = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+                      const originalThreshold = recognitionThreshold;
+
+                      for (const threshold of thresholds) {
+                        setRecognitionThreshold(threshold);
+                        console.log(
+                          `\n🔍 Testando com threshold: ${threshold}`
+                        );
+                        await new Promise((resolve) =>
+                          setTimeout(resolve, 100)
+                        );
+                        await performFaceRecognition();
+                        await new Promise((resolve) =>
+                          setTimeout(resolve, 500)
+                        );
+                      }
+
+                      setRecognitionThreshold(originalThreshold);
+                      console.log(
+                        `\n✅ Teste concluído. Threshold restaurado para: ${originalThreshold}`
+                      );
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Zap className="h-4 w-4" />
+                    Testar Thresholds
+                  </Button>
+
+                  <Button
+                    onClick={async () => {
+                      console.log("🔬 Teste de reconhecimento simples...");
+
+                      if (!videoRef.current || descriptors.length === 0) {
+                        console.log("❌ Câmera ou descritores não disponíveis");
+                        return;
+                      }
+
+                      try {
+                        // Detecta face no vídeo
+                        const detection = await faceapi
+                          .detectSingleFace(
+                            videoRef.current,
+                            new faceapi.TinyFaceDetectorOptions()
+                          )
+                          .withFaceLandmarks()
+                          .withFaceDescriptor();
+
+                        if (!detection) {
+                          console.log("❌ Nenhuma face detectada na webcam");
+                          return;
+                        }
+
+                        console.log("✅ Face detectada na webcam");
+                        console.log(
+                          `📊 Confiança: ${detection.detection.score.toFixed(
+                            4
+                          )}`
+                        );
+
+                        // Compara com cada descritor
+                        console.log(
+                          `\n🔍 Testando contra ${descriptors.length} descritor(es) registrado(s)...`
+                        );
+
+                        for (let i = 0; i < descriptors.length; i++) {
+                          const descriptor = descriptors[i];
+                          const distance = faceapi.euclideanDistance(
+                            detection.descriptor,
+                            descriptor.descriptor
+                          );
+                          const similarity = 1 - Math.min(distance, 1);
+
+                          console.log(
+                            `\n📏 [${i + 1}/${descriptors.length}] ${
+                              descriptor.name
+                            }:`
+                          );
+                          console.log(`   Distância: ${distance.toFixed(4)}`);
+                          console.log(
+                            `   Similaridade: ${(similarity * 100).toFixed(1)}%`
+                          );
+                          console.log(
+                            `   Threshold atual: ${recognitionThreshold}`
+                          );
+                          console.log(
+                            `   Resultado: ${
+                              distance < recognitionThreshold
+                                ? "✅ APROVADO"
+                                : "❌ NEGADO"
+                            }`
+                          );
+                        }
+                      } catch (error) {
+                        console.error("❌ Erro no teste simples:", error);
+                      }
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Eye className="h-4 w-4" />
+                    Teste Simples
+                  </Button>
                 </div>
 
                 {/* Status do reconhecimento em tempo real */}
@@ -750,6 +996,24 @@ const FaceRecognition = () => {
                           className="text-xs"
                         >
                           {cameraActive ? "Conectada" : "Desconectada"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600">
+                          Threshold:
+                        </span>
+                        <Badge variant="default" className="text-xs">
+                          {recognitionThreshold.toFixed(2)}
+                        </Badge>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600">Status:</span>
+                        <Badge
+                          variant={personDetected ? "default" : "secondary"}
+                          className="text-xs"
+                        >
+                          {personDetected ? "Detectando" : "Aguardando"}
                         </Badge>
                       </div>
 
