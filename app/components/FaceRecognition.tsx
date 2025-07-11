@@ -45,7 +45,7 @@ interface PopupState {
 const registeredImages = [
   { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo.jpg" },
   { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo1.jpg" },
-  // { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo2.jpg" },
+  { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo2.jpg" },
   { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo3.jpg" },
 ];
 
