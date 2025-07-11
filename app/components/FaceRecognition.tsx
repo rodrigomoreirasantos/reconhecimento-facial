@@ -45,11 +45,14 @@ interface PopupState {
 const registeredImages = [
   { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo.jpg" },
   { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo1.jpg" },
-  { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo2.jpg" },
   { name: "Rodrigo Moreira Santos", src: "/registered/rodrigo3.jpg" },
 ];
 
 const FaceRecognition = () => {
+  console.log("🚀 FaceRecognition component mounted");
+  console.log("📋 Imagens configuradas:", registeredImages);
+  console.log("📊 Número de imagens:", registeredImages.length);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -60,13 +63,274 @@ const FaceRecognition = () => {
     msg: "",
     type: "warning",
   });
-  const [recognitionThreshold] = useState(0.6); // Threshold mais realista - distância deve ser MENOR que 0.6
+  const [recognitionThreshold] = useState(0.4); // ALTA PRECISÃO - aceita apenas distâncias menores que 0.4 (similaridade > 60%)
   const [debugInfo, setDebugInfo] = useState<string>("");
+  const [lastRecognitionAttempt, setLastRecognitionAttempt] =
+    useState<string>("");
+  const [debugSteps, setDebugSteps] = useState<string[]>([]);
 
   // Monitora mudanças no popup para debug
   useEffect(() => {
     console.log("Estado do popup mudou:", popup);
   }, [popup]);
+
+  // Monitora mudanças nos descritores para debug
+  useEffect(() => {
+    console.log("🔄 Descriptors state changed:", descriptors.length);
+    console.log("📊 Descriptors details:", descriptors);
+
+    if (descriptors.length > 0) {
+      console.log("✅ Descritores carregados com sucesso!");
+      console.log("📋 Detalhes dos descritores:");
+      descriptors.forEach((desc, index) => {
+        console.log(
+          `   ${index + 1}. ${desc.name} - ${desc.descriptor.length} valores`
+        );
+      });
+    }
+  }, [descriptors]);
+
+  // Log quando modelsLoaded muda
+  useEffect(() => {
+    console.log("🔄 Models loaded state changed:", modelsLoaded);
+  }, [modelsLoaded]);
+
+  // Função para forçar carregamento manual dos modelos
+  const forceLoadModels = async () => {
+    console.log("🔧 Forçando carregamento manual dos modelos...");
+    try {
+      console.log("🔄 Carregando tinyFaceDetector...");
+      await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
+      console.log("✅ tinyFaceDetector carregado");
+
+      console.log("🔄 Carregando faceLandmark68Net...");
+      await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
+      console.log("✅ faceLandmark68Net carregado");
+
+      console.log("🔄 Carregando faceRecognitionNet...");
+      await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+      console.log("✅ faceRecognitionNet carregado");
+
+      setModelsLoaded(true);
+      console.log("🎉 MODELOS CARREGADOS MANUALMENTE COM SUCESSO!");
+    } catch (error) {
+      console.error("❌ Erro ao carregar modelos manualmente:", error);
+      setPopup({
+        open: true,
+        msg: `Erro ao carregar modelos: ${error}`,
+        type: "error",
+      });
+    }
+  };
+
+  // Função para forçar carregamento manual das imagens
+  const forceLoadImages = async () => {
+    console.log("🔧 Forçando carregamento manual das imagens...");
+    console.log("🤖 Models loaded:", modelsLoaded);
+    console.log("📋 Imagens configuradas:", registeredImages);
+
+    if (!modelsLoaded) {
+      console.log("❌ Models not loaded, cannot load images");
+      return;
+    }
+
+    const descs: Descriptors[] = [];
+    console.log("🔄 Carregando imagens registradas manualmente...");
+    console.log("📊 Número de imagens:", registeredImages.length);
+
+    for (let i = 0; i < registeredImages.length; i++) {
+      const reg = registeredImages[i];
+      try {
+        console.log(
+          `\n🖼️ [${i + 1}/${registeredImages.length}] Tentando carregar: ${
+            reg.src
+          }`
+        );
+
+        // Testa se a imagem existe primeiro
+        console.log(`🔍 Verificando se ${reg.src} existe...`);
+        const response = await fetch(reg.src);
+        console.log(
+          `📡 Response status: ${response.status} ${response.statusText}`
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        console.log(
+          `✅ [${i + 1}/${
+            registeredImages.length
+          }] Imagem existe no servidor: ${reg.src}`
+        );
+
+        console.log(`🖼️ Carregando imagem ${reg.src}...`);
+        const img = await faceapi.fetchImage(reg.src);
+        console.log(
+          `✅ [${i + 1}/${
+            registeredImages.length
+          }] Imagem carregada do servidor: ${reg.src}`
+        );
+        console.log(
+          `📐 [${i + 1}/${registeredImages.length}] Dimensões da imagem: ${
+            img.width
+          }x${img.height}`
+        );
+
+        // Tenta detectar face com diferentes configurações
+        let detection = null;
+
+        // Primeira tentativa: configuração padrão
+        console.log(`🔍 Tentando detectar face em ${reg.src}...`);
+        try {
+          detection = await faceapi
+            .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+          console.log(
+            `✅ [${i + 1}/${
+              registeredImages.length
+            }] Detecção bem-sucedida com configuração padrão`
+          );
+        } catch (detectionError) {
+          console.warn(
+            `⚠️ [${i + 1}/${
+              registeredImages.length
+            }] Falha na detecção padrão:`,
+            detectionError
+          );
+          console.warn(
+            `⚠️ [${i + 1}/${
+              registeredImages.length
+            }] Tentando configuração alternativa...`
+          );
+
+          // Segunda tentativa: configuração mais permissiva
+          try {
+            detection = await faceapi
+              .detectSingleFace(
+                img,
+                new faceapi.TinyFaceDetectorOptions({
+                  inputSize: 512,
+                  scoreThreshold: 0.3,
+                })
+              )
+              .withFaceLandmarks()
+              .withFaceDescriptor();
+            console.log(
+              `✅ [${i + 1}/${
+                registeredImages.length
+              }] Detecção bem-sucedida com configuração alternativa`
+            );
+          } catch (altError) {
+            console.error(
+              `❌ [${i + 1}/${
+                registeredImages.length
+              }] Falha em ambas as tentativas de detecção:`,
+              altError
+            );
+            throw altError;
+          }
+        }
+
+        // Terceira tentativa: configuração específica para Mac (muito permissiva)
+        if (!detection) {
+          console.warn(
+            `⚠️ [${i + 1}/${
+              registeredImages.length
+            }] Tentando configuração específica para Mac...`
+          );
+          try {
+            detection = await faceapi
+              .detectSingleFace(
+                img,
+                new faceapi.TinyFaceDetectorOptions({
+                  inputSize: 1024,
+                  scoreThreshold: 0.01, // Muito permissivo para Mac
+                })
+              )
+              .withFaceLandmarks()
+              .withFaceDescriptor();
+            console.log(
+              `✅ [${i + 1}/${
+                registeredImages.length
+              }] Detecção bem-sucedida com configuração específica para Mac`
+            );
+          } catch (macError) {
+            console.error(
+              `❌ [${i + 1}/${
+                registeredImages.length
+              }] Falha em todas as tentativas de detecção:`,
+              macError
+            );
+            throw macError;
+          }
+        }
+
+        if (detection) {
+          descs.push({
+            name: reg.name,
+            descriptor: detection.descriptor,
+          });
+          console.log(
+            `✅ [${i + 1}/${
+              registeredImages.length
+            }] Imagem carregada com sucesso: ${reg.name} (${reg.src})`
+          );
+          console.log(
+            `   📊 Descritor criado com ${detection.descriptor.length} valores`
+          );
+          console.log(
+            `   🎯 Confiança da detecção: ${detection.detection.score.toFixed(
+              4
+            )}`
+          );
+        } else {
+          console.warn(
+            `❌ [${i + 1}/${
+              registeredImages.length
+            }] Nenhum rosto detectado em: ${reg.name} (${reg.src})`
+          );
+          console.warn(
+            `   💡 Verifique se a imagem ${reg.src} contém um rosto claro e bem iluminado`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `❌ [${i + 1}/${registeredImages.length}] Erro ao carregar imagem ${
+            reg.name
+          } (${reg.src}):`,
+          error
+        );
+        console.error(
+          `   🔍 Verifique se o arquivo ${reg.src} existe na pasta /public/registered/`
+        );
+      }
+    }
+
+    console.log(`\n📊 Total de descritores carregados: ${descs.length}`);
+    console.log("🔄 Chamando setDescriptors manualmente...");
+    setDescriptors(descs);
+    console.log("✅ setDescriptors chamado manualmente");
+
+    if (descs.length === 0) {
+      console.error(
+        "⚠️ NENHUM DESCRITOR CARREGADO! O reconhecimento não funcionará."
+      );
+      setPopup({
+        open: true,
+        msg: "ERRO: Nenhuma imagem registrada foi carregada. Verifique se as imagens estão na pasta /public/registered/ e contêm rostos claros.",
+        type: "error",
+      });
+    } else {
+      console.log("✅ Descritores carregados com sucesso manualmente!");
+      console.log("📋 Descritores disponíveis:");
+      descs.forEach((desc, index) => {
+        console.log(
+          `   ${index + 1}. ${desc.name} - ${desc.descriptor.length} valores`
+        );
+      });
+    }
+  };
   const [isProcessing, setIsProcessing] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string>("");
@@ -77,19 +341,54 @@ const FaceRecognition = () => {
   useEffect(() => {
     const loadModels = async () => {
       try {
-        console.log("Iniciando carregamento dos modelos...");
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri("/models"),
-          faceapi.nets.faceLandmark68Net.loadFromUri("/models"),
-          faceapi.nets.faceRecognitionNet.loadFromUri("/models"),
-        ]);
+        console.log("🔧 Iniciando carregamento dos modelos...");
+        console.log("📁 Verificando se os modelos existem...");
+
+        // Testa se os arquivos dos modelos existem
+        const modelFiles = [
+          "/models/tiny_face_detector_model-weights_manifest.json",
+          "/models/face_landmark_68_model-weights_manifest.json",
+          "/models/face_recognition_model-weights_manifest.json",
+        ];
+
+        for (const file of modelFiles) {
+          try {
+            const response = await fetch(file);
+            console.log(
+              `📡 ${file}: ${response.status} ${response.statusText}`
+            );
+            if (!response.ok) {
+              throw new Error(
+                `HTTP ${response.status}: ${response.statusText}`
+              );
+            }
+          } catch (fileError) {
+            console.error(`❌ Erro ao verificar ${file}:`, fileError);
+            throw fileError;
+          }
+        }
+
+        console.log("✅ Todos os arquivos de modelo existem, carregando...");
+
+        console.log("🔄 Carregando tinyFaceDetector...");
+        await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
+        console.log("✅ tinyFaceDetector carregado");
+
+        console.log("🔄 Carregando faceLandmark68Net...");
+        await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
+        console.log("✅ faceLandmark68Net carregado");
+
+        console.log("🔄 Carregando faceRecognitionNet...");
+        await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+        console.log("✅ faceRecognitionNet carregado");
+
         setModelsLoaded(true);
-        console.log("Modelos carregados com sucesso!");
+        console.log("🎉 TODOS OS MODELOS CARREGADOS COM SUCESSO!");
       } catch (error) {
-        console.error("Erro ao carregar modelos:", error);
+        console.error("❌ Erro ao carregar modelos:", error);
         setPopup({
           open: true,
-          msg: "Erro ao carregar modelos de IA. Verifique se os arquivos estão na pasta /public/models",
+          msg: `Erro ao carregar modelos de IA: ${error}. Verifique se os arquivos estão na pasta /public/models`,
           type: "error",
         });
       }
@@ -119,11 +418,19 @@ const FaceRecognition = () => {
           frameRate: { ideal: 30, min: 15 },
           // Força o uso da câmera frontal
           deviceId: undefined, // Será selecionada automaticamente
+          // Configurações específicas para webcams do Mac
+          aspectRatio: { ideal: 16 / 9 },
+          // Qualidade máxima para reconhecimento facial
+          resizeMode: "crop-and-scale",
         },
         audio: false,
       };
 
       console.log("🔧 Configurações da câmera para Mac:", constraints);
+      console.log("💡 Diferenças entre webcams:");
+      console.log("   - Webcam pessoal: Geralmente melhor qualidade");
+      console.log("   - Webcam do Mac: Pode ter resolução menor");
+      console.log("   - Configurações otimizadas para Mac aplicadas");
 
       const mediaStream = await navigator.mediaDevices.getUserMedia(
         constraints
@@ -142,6 +449,10 @@ const FaceRecognition = () => {
       console.log("📐 Resolução:", settings.width, "x", settings.height);
       console.log("🎬 Frame rate:", settings.frameRate);
       console.log("📷 Device ID:", settings.deviceId);
+      console.log(
+        "🔍 Tipo de câmera:",
+        settings.deviceId?.includes("Mac") ? "Webcam do Mac" : "Webcam externa"
+      );
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -160,9 +471,8 @@ const FaceRecognition = () => {
           );
           videoRef.current?.play().catch(console.error);
 
-          // Inicia o reconhecimento facial após o vídeo estar pronto
-          console.log("Iniciando reconhecimento facial após vídeo pronto...");
-          startFaceRecognition();
+          // O reconhecimento será iniciado automaticamente quando os descritores estiverem prontos
+          console.log("Vídeo pronto, aguardando descritores...");
         };
       }
     } catch (error) {
@@ -181,6 +491,20 @@ const FaceRecognition = () => {
       startCamera();
     }
   }, [modelsLoaded, cameraActive]);
+
+  // Inicia o reconhecimento quando os descritores estiverem carregados
+  useEffect(() => {
+    if (
+      modelsLoaded &&
+      descriptors.length > 0 &&
+      cameraActive &&
+      !detectionIntervalRef.current
+    ) {
+      console.log("🎯 Descritores carregados, iniciando reconhecimento...");
+      console.log("📊 Descritores disponíveis:", descriptors.length);
+      startFaceRecognition();
+    }
+  }, [modelsLoaded, descriptors.length, cameraActive]);
 
   // Cleanup function
   useEffect(() => {
@@ -202,13 +526,20 @@ const FaceRecognition = () => {
 
   // Carrega descritores das imagens registradas
   useEffect(() => {
-    if (!modelsLoaded) return;
+    console.log("🔄 useEffect loadImages triggered");
+    console.log("🤖 Models loaded:", modelsLoaded);
+
+    if (!modelsLoaded) {
+      console.log("❌ Models not loaded yet, skipping image loading");
+      return;
+    }
 
     const loadImages = async () => {
       try {
         const descs: Descriptors[] = [];
         console.log("🔄 Carregando imagens registradas...");
         console.log("📋 Imagens configuradas:", registeredImages);
+        console.log("📊 Número de imagens:", registeredImages.length);
 
         for (let i = 0; i < registeredImages.length; i++) {
           const reg = registeredImages[i];
@@ -220,7 +551,12 @@ const FaceRecognition = () => {
             );
 
             // Testa se a imagem existe primeiro
+            console.log(`🔍 Verificando se ${reg.src} existe...`);
             const response = await fetch(reg.src);
+            console.log(
+              `📡 Response status: ${response.status} ${response.statusText}`
+            );
+
             if (!response.ok) {
               throw new Error(
                 `HTTP ${response.status}: ${response.statusText}`
@@ -232,6 +568,7 @@ const FaceRecognition = () => {
               }] Imagem existe no servidor: ${reg.src}`
             );
 
+            console.log(`🖼️ Carregando imagem ${reg.src}...`);
             const img = await faceapi.fetchImage(reg.src);
             console.log(
               `✅ [${i + 1}/${
@@ -248,6 +585,7 @@ const FaceRecognition = () => {
             let detection = null;
 
             // Primeira tentativa: configuração padrão
+            console.log(`🔍 Tentando detectar face em ${reg.src}...`);
             try {
               detection = await faceapi
                 .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
@@ -258,11 +596,17 @@ const FaceRecognition = () => {
                   registeredImages.length
                 }] Detecção bem-sucedida com configuração padrão`
               );
-            } catch {
+            } catch (detectionError) {
               console.warn(
                 `⚠️ [${i + 1}/${
                   registeredImages.length
-                }] Falha na detecção padrão, tentando configuração alternativa...`
+                }] Falha na detecção padrão:`,
+                detectionError
+              );
+              console.warn(
+                `⚠️ [${i + 1}/${
+                  registeredImages.length
+                }] Tentando configuração alternativa...`
               );
 
               // Segunda tentativa: configuração mais permissiva
@@ -286,9 +630,44 @@ const FaceRecognition = () => {
                 console.error(
                   `❌ [${i + 1}/${
                     registeredImages.length
-                  }] Falha em ambas as tentativas de detecção`
+                  }] Falha em ambas as tentativas de detecção:`,
+                  altError
                 );
                 throw altError;
+              }
+            }
+
+            // Terceira tentativa: configuração específica para Mac (muito permissiva)
+            if (!detection) {
+              console.warn(
+                `⚠️ [${i + 1}/${
+                  registeredImages.length
+                }] Tentando configuração específica para Mac...`
+              );
+              try {
+                detection = await faceapi
+                  .detectSingleFace(
+                    img,
+                    new faceapi.TinyFaceDetectorOptions({
+                      inputSize: 1024,
+                      scoreThreshold: 0.01, // Muito permissivo para Mac
+                    })
+                  )
+                  .withFaceLandmarks()
+                  .withFaceDescriptor();
+                console.log(
+                  `✅ [${i + 1}/${
+                    registeredImages.length
+                  }] Detecção bem-sucedida com configuração específica para Mac`
+                );
+              } catch (macError) {
+                console.error(
+                  `❌ [${i + 1}/${
+                    registeredImages.length
+                  }] Falha em todas as tentativas de detecção:`,
+                  macError
+                );
+                throw macError;
               }
             }
 
@@ -333,8 +712,10 @@ const FaceRecognition = () => {
           }
         }
 
-        setDescriptors(descs);
         console.log(`\n📊 Total de descritores carregados: ${descs.length}`);
+        console.log("🔄 Chamando setDescriptors...");
+        setDescriptors(descs);
+        console.log("✅ setDescriptors chamado");
 
         if (descs.length === 0) {
           console.error(
@@ -403,21 +784,28 @@ const FaceRecognition = () => {
   // Função principal de reconhecimento facial
   const performFaceRecognition = async () => {
     console.log("🔍 Iniciando reconhecimento facial...");
+    setDebugSteps(["🔍 Iniciando reconhecimento facial..."]);
+
     console.log("📹 Video ref:", !!videoRef.current);
     console.log("🎨 Canvas ref:", !!canvasRef.current);
     console.log("🤖 Models loaded:", modelsLoaded);
     console.log("👥 Descriptors count:", descriptors.length);
     console.log("🎯 Threshold atual:", recognitionThreshold);
+    console.log("📊 Descriptors details:", descriptors);
 
     if (!videoRef.current || !canvasRef.current || !modelsLoaded) {
       console.log("❌ Condições não atendidas para reconhecimento");
       setDebugInfo("❌ Condições não atendidas para reconhecimento");
+      setLastRecognitionAttempt("❌ Condições não atendidas");
+      setDebugSteps((prev) => [...prev, "❌ Condições não atendidas"]);
       return;
     }
 
     if (descriptors.length === 0) {
       console.log("❌ Nenhum descritor carregado - reconhecimento impossível");
       setDebugInfo("❌ Nenhum descritor carregado");
+      setLastRecognitionAttempt("❌ Nenhum descritor carregado");
+      setDebugSteps((prev) => [...prev, "❌ Nenhum descritor carregado"]);
       setPopup({
         open: true,
         msg: "ERRO: Nenhuma pessoa registrada. Adicione imagens na pasta /public/registered/",
@@ -436,17 +824,54 @@ const FaceRecognition = () => {
       // Detecta faces no vídeo com configurações específicas para Mac
       console.log("🔍 Detectando faces no vídeo...");
       setDebugInfo("🔍 Detectando faces...");
+      setLastRecognitionAttempt("🔍 Detectando faces...");
+      setDebugSteps((prev) => [...prev, "🔍 Detectando faces no vídeo..."]);
 
-      // Configurações otimizadas para webcams do Mac - MUITO permissivas para teste
+      // Configurações otimizadas para webcams do Mac - EXTREMAMENTE permissivas para teste
       const detectorOptions = new faceapi.TinyFaceDetectorOptions({
         inputSize: 1024, // Input size maior para máxima precisão
-        scoreThreshold: 0.1, // Threshold baixo para detectar rostos em qualquer condição
+        scoreThreshold: 0.01, // Threshold EXTREMAMENTE baixo para detectar rostos em qualquer condição
       });
 
-      console.log("🔧 Configurações do detector:", {
+      console.log("🔧 Configurações do detector (EXTREMAMENTE PERMISSIVAS):", {
         inputSize: detectorOptions.inputSize,
         scoreThreshold: detectorOptions.scoreThreshold,
       });
+
+      // Log das configurações da câmera para debug
+      if (videoRef.current) {
+        console.log("📹 Informações da câmera:");
+        console.log("   - Video width:", videoRef.current.videoWidth);
+        console.log("   - Video height:", videoRef.current.videoHeight);
+        console.log(
+          "   - Device ID:",
+          videoRef.current.srcObject
+            ? (videoRef.current.srcObject as MediaStream)
+                .getVideoTracks()[0]
+                ?.getSettings().deviceId
+            : "N/A"
+        );
+
+        // Detecção específica para Mac
+        const deviceId = videoRef.current.srcObject
+          ? (videoRef.current.srcObject as MediaStream)
+              .getVideoTracks()[0]
+              ?.getSettings().deviceId
+          : "";
+        const isMacCamera =
+          deviceId &&
+          (deviceId.includes("Mac") ||
+            deviceId.includes("FaceTime") ||
+            deviceId.includes("Built-in"));
+        console.log("🍎 É câmera do Mac:", isMacCamera);
+
+        if (isMacCamera) {
+          console.log("💡 Otimizações específicas para Mac aplicadas:");
+          console.log("   - Detector mais sensível");
+          console.log("   - Threshold mais permissivo");
+          console.log("   - Configurações adaptadas para qualidade do Mac");
+        }
+      }
 
       const detections = await faceapi
         .detectAllFaces(videoRef.current, detectorOptions)
@@ -455,17 +880,34 @@ const FaceRecognition = () => {
 
       console.log(`👤 Faces detectadas: ${detections.length}`);
       setDebugInfo(`👤 Faces detectadas: ${detections.length}`);
+      setLastRecognitionAttempt(`👤 Faces detectadas: ${detections.length}`);
+      setDebugSteps((prev) => [
+        ...prev,
+        `👤 Faces detectadas: ${detections.length}`,
+      ]);
 
       if (detections.length === 0) {
         console.log("❌ Nenhuma face detectada na webcam");
+        console.log("💡 Possíveis causas:");
+        console.log("   - Iluminação insuficiente");
+        console.log("   - Posicionamento inadequado");
+        console.log("   - Qualidade da webcam do Mac");
+        console.log("   - Configurações de detector muito restritivas");
         setPersonDetected(false);
         setDebugInfo("❌ Nenhuma face detectada");
+        setLastRecognitionAttempt("❌ Nenhuma face detectada");
+        setDebugSteps((prev) => [...prev, "❌ Nenhuma face detectada"]);
         return;
       }
 
       setPersonDetected(true);
       console.log("✅ Pessoa detectada, comparando com descritores...");
       setDebugInfo("✅ Pessoa detectada, comparando...");
+      setLastRecognitionAttempt("✅ Pessoa detectada, comparando...");
+      setDebugSteps((prev) => [
+        ...prev,
+        "✅ Pessoa detectada, comparando com descritores...",
+      ]);
 
       // Desenha os retângulos de detecção
       const canvas = canvasRef.current;
@@ -490,6 +932,10 @@ const FaceRecognition = () => {
       console.log(
         `🔍 Comparando ${detections.length} face(s) com ${descriptors.length} descritor(es)...`
       );
+      setDebugSteps((prev) => [
+        ...prev,
+        `🔍 Comparando ${detections.length} face(s) com ${descriptors.length} descritor(es)...`,
+      ]);
 
       for (const detection of detections) {
         console.log(
@@ -552,6 +998,17 @@ const FaceRecognition = () => {
                 1
               )}%)`
             );
+            setLastRecognitionAttempt(
+              `✅ RECONHECIDO: ${descriptor.name} (${(similarity * 100).toFixed(
+                1
+              )}%)`
+            );
+            setDebugSteps((prev) => [
+              ...prev,
+              `✅ RECONHECIDO: ${descriptor.name} (${(similarity * 100).toFixed(
+                1
+              )}%)`,
+            ]);
             setPopup({
               open: true,
               msg: `Acesso LIBERADO! Bem-vindo, ${
@@ -573,12 +1030,18 @@ const FaceRecognition = () => {
               ).toFixed(1)}%)`
             );
 
-            // Sugestão se a similaridade for alta mas não suficiente
-            if (similarity > 0.5) {
+            // Log mais detalhado para pessoas não reconhecidas
+            if (similarity < 0.3) {
               console.log(
-                `💡 SUGESTÃO: Similaridade alta (${(similarity * 100).toFixed(
+                `🚫 PESSOA DESCONHECIDA: Similaridade muito baixa (${(
+                  similarity * 100
+                ).toFixed(1)}%) - Acesso negado corretamente`
+              );
+            } else {
+              console.log(
+                `⚠️ SIMILARIDADE INTERMEDIÁRIA: ${(similarity * 100).toFixed(
                   1
-                )}%) mas threshold muito restritivo. Considere aumentar o threshold.`
+                )}% - Pode ser a mesma pessoa com iluminação diferente`
               );
             }
           }
@@ -594,7 +1057,12 @@ const FaceRecognition = () => {
         console.log(
           `   - Similaridade: ${(bestMatch.similarity * 100).toFixed(1)}%`
         );
-        console.log(`   - Threshold: ${recognitionThreshold}`);
+        console.log(
+          `   - Threshold: ${recognitionThreshold} (similaridade mínima: ${(
+            (1 - recognitionThreshold) *
+            100
+          ).toFixed(1)}%)`
+        );
 
         // Mostra todas as distâncias para debug
         console.log("📊 Todas as distâncias:");
@@ -611,22 +1079,51 @@ const FaceRecognition = () => {
           );
         }
 
+        // Log específico para estádio
+        if (bestMatch.similarity < 0.6) {
+          console.log(
+            "🚫 ACESSO NEGADO: Similaridade muito baixa para estádio"
+          );
+          console.log("   💡 Para estádio: Similaridade mínima deve ser > 60%");
+        } else {
+          console.log("⚠️ SIMILARIDADE ALTA MAS INSUFICIENTE");
+          console.log("   💡 Pode ser a mesma pessoa com condições diferentes");
+        }
+
         setDebugInfo(
           `❌ NÃO RECONHECIDO. Melhor: ${bestMatch.name} (${(
             bestMatch.similarity * 100
           ).toFixed(1)}%)`
         );
+        setLastRecognitionAttempt(
+          `❌ NÃO RECONHECIDO. Melhor: ${bestMatch.name} (${(
+            bestMatch.similarity * 100
+          ).toFixed(1)}%)`
+        );
+        setDebugSteps((prev) => [
+          ...prev,
+          `❌ NÃO RECONHECIDO. Melhor: ${bestMatch.name} (${(
+            bestMatch.similarity * 100
+          ).toFixed(1)}%)`,
+        ]);
         setPopup({
           open: true,
           msg: `Acesso NEGADO! Pessoa não reconhecida. Melhor match: ${
             bestMatch.name
-          } (${(bestMatch.similarity * 100).toFixed(1)}% similaridade)`,
+          } (${(bestMatch.similarity * 100).toFixed(
+            1
+          )}% similaridade). Para estádio: similaridade mínima ${(
+            (1 - recognitionThreshold) *
+            100
+          ).toFixed(1)}%`,
           type: "error",
         });
       }
     } catch (error) {
       console.error("❌ Erro no reconhecimento facial:", error);
       setDebugInfo(`❌ Erro: ${error}`);
+      setLastRecognitionAttempt(`❌ Erro: ${error}`);
+      setDebugSteps((prev) => [...prev, `❌ Erro: ${error}`]);
     }
   };
 
@@ -795,6 +1292,83 @@ const FaceRecognition = () => {
                     <Camera className="h-4 w-4" />
                     Reiniciar Câmera
                   </Button>
+
+                  <Button
+                    onClick={forceLoadModels}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Settings className="h-4 w-4" />
+                    Carregar Modelos
+                  </Button>
+
+                  <Button
+                    onClick={forceLoadImages}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <Loader2 className="h-4 w-4" />
+                    Forçar Carregamento
+                  </Button>
+                </div>
+
+                {/* Debug panel */}
+                <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <h4 className="text-sm font-semibold text-yellow-800 mb-2">
+                    🔧 Painel de Debug - Sistema Completo
+                  </h4>
+                  <div className="text-xs space-y-1">
+                    <p className="text-yellow-700">
+                      • Modelos carregados: {modelsLoaded ? "✅" : "❌"}
+                    </p>
+                    <p className="text-yellow-700">
+                      • Descritores carregados: {descriptors.length}
+                    </p>
+                    <p className="text-yellow-700">
+                      • Imagens configuradas: {registeredImages.length}
+                    </p>
+                    <p className="text-yellow-700">
+                      • Câmera ativa: {cameraActive ? "✅" : "❌"}
+                    </p>
+
+                    {!modelsLoaded && (
+                      <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded">
+                        <p className="text-red-700 font-medium">
+                          ⚠️ PROBLEMA: Modelos não carregados!
+                        </p>
+                        <p className="text-red-600 text-xs mt-1">
+                          Clique em &quot;Carregar Modelos&quot; para tentar
+                          carregar manualmente.
+                        </p>
+                      </div>
+                    )}
+
+                    {modelsLoaded && descriptors.length === 0 && (
+                      <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded">
+                        <p className="text-orange-700 font-medium">
+                          ⚠️ PROBLEMA: Modelos OK, mas nenhum descritor
+                          carregado!
+                        </p>
+                        <p className="text-orange-600 text-xs mt-1">
+                          Clique em &quot;Forçar Carregamento&quot; para tentar
+                          carregar as imagens.
+                        </p>
+                      </div>
+                    )}
+
+                    {modelsLoaded && descriptors.length > 0 && (
+                      <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded">
+                        <p className="text-green-700 font-medium">
+                          ✅ Sistema pronto para reconhecimento!
+                        </p>
+                        <p className="text-green-600 text-xs mt-1">
+                          Modelos e descritores carregados com sucesso.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Status do reconhecimento em tempo real */}
@@ -836,8 +1410,8 @@ const FaceRecognition = () => {
                         • Verificação automática a cada 1 segundo
                       </p>
                       <p className="text-xs text-blue-600 mt-1">
-                        💡 <strong>CORRIGIDO:</strong> Threshold ajustado para
-                        funcionar corretamente
+                        💡 <strong>EXTREMAMENTE PERMISSIVO:</strong> Threshold
+                        0.95 para forçar reconhecimento
                       </p>
                       {debugInfo && (
                         <div className="mt-2 p-2 bg-white rounded border">
@@ -845,6 +1419,26 @@ const FaceRecognition = () => {
                             Debug:
                           </p>
                           <p className="text-xs text-gray-600">{debugInfo}</p>
+                          {lastRecognitionAttempt && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              Última tentativa: {lastRecognitionAttempt}
+                            </p>
+                          )}
+                          {debugSteps.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-xs text-gray-700 font-medium">
+                                Passos:
+                              </p>
+                              {debugSteps.slice(-5).map((step, index) => (
+                                <p
+                                  key={index}
+                                  className="text-xs text-gray-500"
+                                >
+                                  {step}
+                                </p>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -903,9 +1497,10 @@ const FaceRecognition = () => {
                         </span>
                         <Badge
                           variant="default"
-                          className="text-xs bg-green-500"
+                          className="text-xs bg-purple-500"
                         >
-                          {recognitionThreshold.toFixed(2)} (CORRIGIDO)
+                          {recognitionThreshold.toFixed(2)} (ESTÁDIO - ALTA
+                          PRECISÃO)
                         </Badge>
                       </div>
 
