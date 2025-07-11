@@ -63,7 +63,7 @@ const FaceRecognition = () => {
     msg: "",
     type: "warning",
   });
-  const [recognitionThreshold] = useState(0.4); // ALTA PRECISÃO - aceita apenas distâncias menores que 0.4 (similaridade > 60%)
+  const [recognitionThreshold] = useState(0.35); // ALTÍSSIMA PRECISÃO - aceita apenas distâncias menores que 0.35 (similaridade > 65%)
   const [debugInfo, setDebugInfo] = useState<string>("");
   const [lastRecognitionAttempt, setLastRecognitionAttempt] =
     useState<string>("");
@@ -793,11 +793,40 @@ const FaceRecognition = () => {
     console.log("🎯 Threshold atual:", recognitionThreshold);
     console.log("📊 Descriptors details:", descriptors);
 
-    if (!videoRef.current || !canvasRef.current || !modelsLoaded) {
-      console.log("❌ Condições não atendidas para reconhecimento");
-      setDebugInfo("❌ Condições não atendidas para reconhecimento");
-      setLastRecognitionAttempt("❌ Condições não atendidas");
-      setDebugSteps((prev) => [...prev, "❌ Condições não atendidas"]);
+    // Verificações de segurança mais robustas
+    if (!videoRef.current) {
+      console.log("❌ Video ref é null");
+      setDebugInfo("❌ Video ref é null");
+      setLastRecognitionAttempt("❌ Video ref é null");
+      setDebugSteps((prev) => [...prev, "❌ Video ref é null"]);
+      return;
+    }
+
+    if (!canvasRef.current) {
+      console.log("❌ Canvas ref é null");
+      setDebugInfo("❌ Canvas ref é null");
+      setLastRecognitionAttempt("❌ Canvas ref é null");
+      setDebugSteps((prev) => [...prev, "❌ Canvas ref é null"]);
+      return;
+    }
+
+    if (!modelsLoaded) {
+      console.log("❌ Models não carregados");
+      setDebugInfo("❌ Models não carregados");
+      setLastRecognitionAttempt("❌ Models não carregados");
+      setDebugSteps((prev) => [...prev, "❌ Models não carregados"]);
+      return;
+    }
+
+    // Verificação adicional para vídeo estar pronto
+    if (
+      videoRef.current.videoWidth === 0 ||
+      videoRef.current.videoHeight === 0
+    ) {
+      console.log("❌ Vídeo não está pronto (dimensões zero)");
+      setDebugInfo("❌ Vídeo não está pronto");
+      setLastRecognitionAttempt("❌ Vídeo não está pronto");
+      setDebugSteps((prev) => [...prev, "❌ Vídeo não está pronto"]);
       return;
     }
 
@@ -811,6 +840,15 @@ const FaceRecognition = () => {
         msg: "ERRO: Nenhuma pessoa registrada. Adicione imagens na pasta /public/registered/",
         type: "error",
       });
+      return;
+    }
+
+    // Verificação adicional para stream estar ativo
+    if (!streamRef.current || !streamRef.current.active) {
+      console.log("❌ Stream não está ativo");
+      setDebugInfo("❌ Stream não está ativo");
+      setLastRecognitionAttempt("❌ Stream não está ativo");
+      setDebugSteps((prev) => [...prev, "❌ Stream não está ativo"]);
       return;
     }
 
@@ -900,6 +938,111 @@ const FaceRecognition = () => {
         return;
       }
 
+      // VERIFICAÇÃO CRÍTICA PARA ESTÁDIO: Múltiplas faces
+      if (detections.length > 1) {
+        console.log("🚫 MÚLTIPLAS FACES DETECTADAS - ACESSO NEGADO");
+        console.log("💡 Para estádio: Apenas uma pessoa por vez");
+        console.log(`📊 Faces detectadas: ${detections.length}`);
+
+        // Log das confianças de cada face
+        detections.forEach((detection, index) => {
+          console.log(
+            `   Face ${
+              index + 1
+            }: confiança ${detection.detection.score.toFixed(3)}`
+          );
+        });
+
+        // VERIFICAÇÃO ADICIONAL: Se a segunda face tem confiança muito baixa, pode ser falso positivo
+        const mainFace = detections[0];
+        const secondaryFace = detections[1];
+
+        console.log(
+          `🎯 Face principal: ${mainFace.detection.score.toFixed(3)}`
+        );
+        console.log(
+          `🎯 Face secundária: ${secondaryFace.detection.score.toFixed(3)}`
+        );
+
+        // Se a face secundária tem confiança muito baixa (< 0.3), pode ser falso positivo
+        if (secondaryFace.detection.score < 0.3) {
+          console.log(
+            "✅ Face secundária com confiança baixa - provável falso positivo"
+          );
+          console.log("💡 Continuando com apenas a face principal");
+
+          // Continua com apenas a primeira face (mais confiável)
+          console.log("✅ Usando apenas face principal para reconhecimento");
+
+          // Continua o processamento com apenas uma face
+          setPersonDetected(true);
+          setDebugInfo("✅ Face principal detectada, comparando...");
+          setLastRecognitionAttempt(
+            "✅ Face principal detectada, comparando..."
+          );
+          setDebugSteps((prev) => [
+            ...prev,
+            "✅ Face principal detectada, comparando com descritores...",
+          ]);
+
+          // Continua com o reconhecimento usando apenas a face principal
+          // (o código continua normalmente após este bloco)
+        } else {
+          // Se a segunda face tem confiança alta, realmente há múltiplas pessoas
+          console.log("🚫 Múltiplas pessoas confirmadas - Acesso negado");
+
+          setPersonDetected(false);
+          setDebugInfo(
+            `🚫 Múltiplas faces (${detections.length}) - Acesso negado`
+          );
+          setLastRecognitionAttempt(
+            `🚫 Múltiplas faces (${detections.length}) - Acesso negado`
+          );
+          setDebugSteps((prev) => [
+            ...prev,
+            `🚫 Múltiplas faces (${detections.length}) - Acesso negado`,
+          ]);
+
+          setPopup({
+            open: true,
+            msg: `Acesso NEGADO! Múltiplas pessoas detectadas (${detections.length}). Para estádio: apenas uma pessoa por vez.`,
+            type: "error",
+          });
+          return;
+        }
+      }
+
+      // VERIFICAÇÃO ADICIONAL: Detectar interferência mesmo com uma face
+      const detection = detections[0];
+      console.log(
+        `🎯 Confiança da detecção: ${detection.detection.score.toFixed(3)}`
+      );
+
+      // Se a confiança for muito baixa, pode indicar detecção parcial ou interferência
+      if (detection.detection.score < 0.3) {
+        console.log(
+          "⚠️ Confiança muito baixa - pode haver interferência de outras pessoas"
+        );
+        console.log("💡 Para estádio: Posicione-se melhor na frente da câmera");
+
+        setPersonDetected(false);
+        setDebugInfo("⚠️ Confiança muito baixa - possível interferência");
+        setLastRecognitionAttempt(
+          "⚠️ Confiança muito baixa - possível interferência"
+        );
+        setDebugSteps((prev) => [
+          ...prev,
+          "⚠️ Confiança muito baixa - possível interferência",
+        ]);
+
+        setPopup({
+          open: true,
+          msg: "Acesso NEGADO! Detecção com confiança muito baixa. Posicione-se melhor na frente da câmera, sem outras pessoas próximas.",
+          type: "error",
+        });
+        return;
+      }
+
       setPersonDetected(true);
       console.log("✅ Pessoa detectada, comparando com descritores...");
       setDebugInfo("✅ Pessoa detectada, comparando...");
@@ -911,23 +1054,48 @@ const FaceRecognition = () => {
 
       // Desenha os retângulos de detecção
       const canvas = canvasRef.current;
+
+      // Verificação de segurança para videoRef
+      if (!videoRef.current) {
+        console.log("❌ Video ref é null, pulando desenho");
+        return;
+      }
+
       const displaySize = {
-        width: videoRef.current!.videoWidth,
-        height: videoRef.current!.videoHeight,
+        width: videoRef.current.videoWidth,
+        height: videoRef.current.videoHeight,
       };
+
+      // Verificação adicional para dimensões válidas
+      if (displaySize.width === 0 || displaySize.height === 0) {
+        console.log("❌ Dimensões do vídeo inválidas, pulando desenho");
+        return;
+      }
+
       faceapi.matchDimensions(canvas, displaySize);
 
       const resizedDetections = faceapi.resizeResults(detections, displaySize);
       const ctx = canvas.getContext("2d");
       if (ctx) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Desenha todas as faces detectadas
         faceapi.draw.drawDetections(canvas, resizedDetections);
+
+        // Se há múltiplas faces, adiciona texto de aviso
+        if (resizedDetections.length > 1) {
+          ctx.fillStyle = "#ff0000";
+          ctx.font = "20px Arial";
+          ctx.fillText("MÚLTIPLAS PESSOAS DETECTADAS", 10, 30);
+        }
       }
 
       // Compara com os descritores registrados
       let foundMatch = false;
       let bestMatch = { name: "", distance: Infinity, similarity: 0 };
       const allDistances: string[] = [];
+      const highSimilarityMatches: Array<{ name: string; similarity: number }> =
+        [];
 
       console.log(
         `🔍 Comparando ${detections.length} face(s) com ${descriptors.length} descritor(es)...`
@@ -980,6 +1148,14 @@ const FaceRecognition = () => {
               distance: distance,
               similarity: similarity,
             };
+          }
+
+          // Coleta matches com alta similaridade (possível interferência)
+          if (similarity > 0.4) {
+            highSimilarityMatches.push({
+              name: descriptor.name,
+              similarity: similarity,
+            });
           }
 
           // Lógica corrigida: distância menor = mais similar
@@ -1046,6 +1222,39 @@ const FaceRecognition = () => {
             }
           }
         }
+      }
+
+      // VERIFICAÇÃO CRÍTICA: Múltiplas pessoas com alta similaridade
+      if (highSimilarityMatches.length > 1) {
+        console.log("🚫 MÚLTIPLAS PESSOAS COM ALTA SIMILARIDADE DETECTADAS");
+        console.log("💡 Isso indica interferência de outras pessoas na câmera");
+        console.log("📊 Matches com alta similaridade:");
+        highSimilarityMatches.forEach((match, index) => {
+          console.log(
+            `   ${index + 1}. ${match.name}: ${(match.similarity * 100).toFixed(
+              1
+            )}%`
+          );
+        });
+
+        setPersonDetected(false);
+        setDebugInfo(
+          "🚫 Múltiplas pessoas com alta similaridade - possível interferência"
+        );
+        setLastRecognitionAttempt(
+          "🚫 Múltiplas pessoas com alta similaridade - possível interferência"
+        );
+        setDebugSteps((prev) => [
+          ...prev,
+          "🚫 Múltiplas pessoas com alta similaridade - possível interferência",
+        ]);
+
+        setPopup({
+          open: true,
+          msg: `Acesso NEGADO! Detectada possível interferência de outras pessoas. Posicione-se sozinho na frente da câmera.`,
+          type: "error",
+        });
+        return;
       }
 
       // Se chegou aqui, não reconheceu ninguém
@@ -1555,6 +1764,13 @@ const FaceRecognition = () => {
                         <span>
                           Apenas pessoas com ingressos válidos terão acesso
                           liberado
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <div className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></div>
+                        <span className="font-semibold">
+                          IMPORTANTE: Apenas uma pessoa por vez na frente da
+                          câmera
                         </span>
                       </li>
                     </ul>
